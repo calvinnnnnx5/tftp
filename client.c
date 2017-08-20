@@ -8,7 +8,12 @@
 #define PORT 6012
 
 void timeoutHandler(int x) {
-    
+    //TODO: handle timeout
+    // Check if sendAttempts = 0 (10 timeouts)
+        // If so, exit
+    // check last received ack block & current block
+    // resend next block after last ack block
+    //Reset timer    
 }
 
 int main (int argc, char const *argv[]) {
@@ -34,6 +39,13 @@ int main (int argc, char const *argv[]) {
 
     struct hostent hp;
     hp = gethostbyname("localhost");
-
     signal(SIGALRM,timeoutHandler);
+    
+        
+    //TODO: Whatever is below this.
+    //Create a string/char[] to send
+    //While loop:
+        //check if received anything
+        //if so, process packet, send back ACK
+        //send info
 }
