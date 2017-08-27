@@ -13,9 +13,13 @@ typedef int bool;
 
 static int sendAttempts = 10;
 static const int TIMEOUT_BASE = 1;
-static int timeoutInterval = TIMEOUT_BASE; 
+static int timeoutInterval = 1; 
 static int* sentPackets = NULL;
-static char buff[516] = memset( (char*)&buff,0,sizeof(buff));
+static char buff[516] = {0};
+static struct sockaddr_in client_addr;
+static struct sockaddr_in server_addr;
+
+static int fd = -1;
 
 void timeoutHandler(int x) {
 
@@ -42,24 +46,79 @@ void timeoutHandler(int x) {
     }
 }
 
-void readOrWrite(char[516] buff, bool readMode) {
-    char mode[] = {0};
-    char filename[] = {0};
-    char* buffer = NULL; 
+bool validFileName(char fileName[512]) {
+    int i = 0;
+    while(fileName[i] != '\0') {
+        if (fileName[i] == '/') {
+            return false;
+        }
+        i++;
+    }
+
+    return true;
+}
+
+void readOrWrite(char buff[516], bool writeMode) {
+    char mode[6] = {0};
+    char fileName[512] = {0};
+    char* buffPtr = &buff;
+    char* strPtr = &fileName; 
+    
+    //Get filename from buffer
+    while (*buffPtr != '\0') {
+        *strPtr = *buffPtr;
+        strPtr++; buffPtr++;
+    }
+
+    if( !validFileName(fileName) ) {
+        //send error packet
+        return;
+    }
+    
+    buffPtr++;
+    strPtr = &mode;
+    int counter = 0;
+    //Get mode from buffer
+    while (*buffPtr != '\0') {
+
+        //mode MUST be octet (5 char + 1 null char)
+        counter++;
+        if (counter > 5) {
+            //send error packet
+            return;
+        }
+
+        *strPtr = *buffPtr;
+        strPtr++; buffPtr++;   
+    }
+
+    *strPtr = '\0';
+
+    FILE fp;
+    //create or append to file with fileName if write mode
+    if (writeMode) {
+        char* filePtr = &fileName;
+        fp = *fopen(filePtr,"a");
+    }
+
+    //send ACK packet
+    //while loop to receive whatevea
+    int recvlen;
+    while(true) {
+        recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct socketaddr*)&server_addr, sizeof(server_addr));
+    }
 }
 
 int main (int argc, char const *argv[]) {
 
-    struct sockaddr_in client_addr;
-    struct sockaddr_in server_addr;
-
-    int fd = socket(AF_INET,SOCK_DGRAM,0);
+    fd = socket(AF_INET,SOCK_DGRAM,0);
 
     if (fd < 0) {
         perror("fd is less than 0");
         exit(-1);
     }
 
+    memset( (char*)&buff,0,sizeof(buff));
     memset( (char*)&server_addr,0,sizeof(server_addr));
 
     server_addr.sin_family = AF_INET;
@@ -72,7 +131,8 @@ int main (int argc, char const *argv[]) {
         
     //TODO: Whatever is below this.
     //Create a string/char[] to send
-    char data[512] = memset( (char*)&data,0,sizeof(data));
+    char data[512];
+    memset( (char*)&data,0,sizeof(data));
 
     //While loop:
         //check if received anything
@@ -84,7 +144,7 @@ int main (int argc, char const *argv[]) {
     while(notDone) {
         //Only do something if a packet is recieved
         //Otherwise wait for an ACK packet (or timeout)
-        recvlen = recvfrom(fd,buff,516,(struct sockaddr*)&serveraddr, sizeof(serveraddr));
+        recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&server_addr, sizeof(server_addr));
         if (recvlen) { 
             char opcode = buff[0]; 
 

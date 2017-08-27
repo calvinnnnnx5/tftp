@@ -5,3 +5,4 @@ client: client.c
 
 server: server.c
 	gcc -o server server.c
+
