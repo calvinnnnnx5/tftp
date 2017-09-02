@@ -227,7 +227,6 @@ void readFromClient(FILE* fp) {
         // (4 bytes for opcode and block number, 512 bytes for data) 
 	else if (recvlen < 516) {
             printf("Received packet is too large. Terminating connection.\n");
-	    free(message);
 	    exit(-1);
         }
     }
