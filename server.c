@@ -235,9 +235,8 @@ void readFromClient(FILE* fp) {
 // Writing to client from server
 void writeToClient(FILE* fp) {
 
-    // Set up block number (0 for WRQ), wait for ACK or timeout
-    blockNumber = 0;
-    blockNumber = waitForACK(blockNumber);
+    // Set up block number (1 for WRQ), wait for ACK or timeout
+    blockNumber = 1;
 
     // Set up buffer, read first 512 characters from the file
     char buff[512] = {0};
