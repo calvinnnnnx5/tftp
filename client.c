@@ -28,20 +28,22 @@ void resendPacket() {
 void timeoutHandler(int x) {
 
     if (x == SIGALRM) {
-        bool notDone = true;
 
         //Exit/terminate after 10 consecutive tries
         if (!sendAttempts) {
+            printf("TIMEOUT: 0/10 send attempts remaining. Terminating.\n");
             exit(-1);
 
         //If still unacknowledged & less than 10 consecutive tries,
         //resend packet again, double timer, & decrement sendAttempts
         } else {
+            printf("TIMEOUT: %d/10 send attempts remaining. Resending last packet with interval %d s.\n",sendAttempts,timeoutInterval);
+
             //resend packet
             resendPacket();
 
             //reset timer
-            timeoutInterval = timeoutInterval * 2;
+            timeoutInterval = (timeoutInterval < 16) ? timeoutInterval * 2 : 16;
             alarm(timeoutInterval);
 
             //decrease sendAttempts by 1
@@ -235,6 +237,7 @@ int waitForACK(int expectedBlock) {
     
     // Do not stop waiting until ack arrives
     // Mandatory for Stop-and-Wait
+    printf("WAITING FOR ACK OF BLOCK NUMBER %d.n", expectedBlock);
     while (notDone) {
         recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&server_addr,&len);
        
@@ -259,13 +262,17 @@ int waitForACK(int expectedBlock) {
                 if (block == expectedBlock) {
                     expectedBlock++;
                     notDone = true;
+                    printf("RECV: ACK of Block Number %d.\n",block);
 
                 // If block > expectedBlock, there is something obv wrong
                 } else if (block > expectedBlock) {
                     sendERR(0,"RECEIVED BLOCK NUMBER GREATER THAN EXPECTED","RECIEVED BLOCK NUMBER GREATER THAN EXPECTED. Terminating.\n");
 
-                } // In case of block < expected Block, do nothing
-                  // Duped ack => no action as stated in writeup
+                // In case of block < expected Block, do nothing
+                // Duped ack => no action as stated in writeup
+                } else {
+                    printf("RECV: Duplicate ACK message of Block Number %d. No action taken.\n", block);
+                }
             }
         }
     }
@@ -281,7 +288,7 @@ void sendRQ(const char* filename, bool writeMode) {
     char *fnPtr = NULL;
     fnPtr = (char*)filename;
     int index = 0;
-
+    
     // Get size for rqPacket
     // size of filename + 2 bytes for opcode
     // + 2 bytes for null chars
@@ -294,27 +301,28 @@ void sendRQ(const char* filename, bool writeMode) {
     // Set appropriate fields in order
     rqPacket[index++] = 0;
     rqPacket[index++] = opcode;
-    
-    while (*filename) {
-        rqPacket[index++] = *filename;
+ 
+    while (*fnPtr) {
+        rqPacket[index++] = *fnPtr++;
     }
     rqPacket[index++] = '\0';
 
     while (*mode) {
-        rqPacket[index++] = *mode;
+        rqPacket[index++] = *mode++;
     }
     rqPacket[index++] = '\0';
-
+    
     // Copy rqPacket to lastPacket in case
     // of timeout occurring
+    lastPacket = realloc(lastPacket,size);
     strncpy(lastPacket,rqPacket,size);
-
+    
     // Send request packet
     sendto(fd,rqPacket,strlen(rqPacket),0,(struct sockaddr*)&server_addr,sizeof(server_addr));
 
     // Set timer
     alarm(timeoutInterval);    
-
+    
     // Free memory
     free(rqPacket);
 }
@@ -327,6 +335,7 @@ void readFromServer(FILE* fp) {
     int len = sizeof(server_addr);
 
     // Now in receiving mode
+    printf("Waiting for Data Packets from server...\n");
     while (notDone) {
         int recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&server_addr,&len); 
         
@@ -340,6 +349,8 @@ void readFromServer(FILE* fp) {
             // Write to file specified by fp
             if ((buff[1] == 3) && (block == blockNumber)) {
                 
+                printf("RECV: Data Packet of Block Number %d.\n",block);
+
                 // Turn off timer for request packet
                 alarm(0);
 
@@ -364,15 +375,18 @@ void readFromServer(FILE* fp) {
                 }
 
                 // Send ACK with block number received
+                printf("SEND: ACK of Block Number %d.\n",blockNumber);
                 sendACK(blockNumber++, false);
                 
             // In case of duplicate data packet, resend last packet (ACK message)
             } else if ((buff[1] == 3) && (block < blockNumber)) {
+                printf("RECV: Duplicate data packet of block %d.\n",block);
+                printf("SEND: Last ACK message of block %d.\n",blockNumber - 1);   
                 resendPacket();
 
             // A bunch of possible errors
-            }  else if (block != blockNumber) {
-                sendERR(0,"DID NOT RECEIVE BLOCK NUMBER 1 AFTER RRQ","DID NOT RECEIVE BLOCK NUMBER 1 AFTER RRQ. Terminating.\n");
+            }  else if (block > blockNumber) {
+                sendERR(0,"RECEIVED A BLOCK GREATER THAN EXPECTED","RECEIVED A BLOCK GREATER THAN EXPECTED. Terminating.\n");
 
             } else if (buff[1] == 5) {
                 exit(-1);
@@ -388,6 +402,8 @@ void readFromServer(FILE* fp) {
             sendERR(0,"DATA TOO LARGE; RESTRICT TO 512 BYTES", "RECEIVED DATA EXCEEDS 512 BYTES. Terminating.\n");
         }
     }
+    
+    fclose(fp);
 }
 
 // WRITING TO SERVER AND READING FROM CLIENT!
@@ -407,7 +423,8 @@ void writeToServer(FILE* fp) {
         if (bytesRead < 512) {
             buff[bytesRead] = '\0';
         }   
-
+        
+        printf("SEND: Data Packet of size %d with Block Number %d.\n",bytesRead,blockNumber);
         sendData(buff,blockNumber);
 
         blockNumber = waitForACK(blockNumber);
@@ -429,11 +446,13 @@ void readOrWrite(const char* filename, bool writeMode) {
     FILE* fp = fopen(filename,flag);
     checkERR(writeMode);
 
-    sendRQ(filename, writeMode);
+    sendRQ(filename, writeMode);    
 
     if (writeMode) {
+        printf("WRQ sent to server.\n");
         writeToServer(fp);
     } else {
+        printf("RRQ sent to server.\n");
         readFromServer(fp);
     }
 }
@@ -454,7 +473,7 @@ int main (int argc, const char *argv[]) {
     const char *filename;
 
     // Handle -h (help) flag
-    if ((argc > 0) && (strcmp(argv[1],"-h") == 0)) {
+    if ((argc > 1) && (strcmp(argv[1],"-h") == 0)) {
         showHelp();
 
     // Ensure there are only two arguments
@@ -516,4 +535,10 @@ int main (int argc, const char *argv[]) {
  
     // Start the actual reading/writing process      
     readOrWrite(filename,writeMode);
+
+    if (writeMode) {
+        printf("Write of file %s to server successful. Terminating.\n",filename);
+    } else {
+        printf("Read of file %s from server successful. Terminating. \n",filename);
+    }
 }
