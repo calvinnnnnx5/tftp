@@ -7,8 +7,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
-//#define PORT 6112
-#define SERVERPORT 12345
+#define PORT 6112
+//#define PORT 12345
 #define CLIENTPORT 54321
 
 typedef int bool;
@@ -503,7 +503,7 @@ int main (int argc, const char *argv[]) {
     // Other things for server & client addr
     server_addr.sin_family = AF_INET;
     client_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVERPORT);
+    server_addr.sin_port = htons(PORT);
     client_addr.sin_port = htons(CLIENTPORT);
     memcpy((void*)&server_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
     memcpy((void*)&client_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
@@ -511,7 +511,7 @@ int main (int argc, const char *argv[]) {
 
     // Bind socket to port/process
     if (bind(fd, (struct sockaddr*)&server_addr,sizeof(server_addr)) ) {
-        printf("UNABLE TO BIND PORT %d TO PROCESS SOCKET. Terminating.\n",SERVERPORT);
+        printf("UNABLE TO BIND PORT %d TO PROCESS SOCKET. Terminating.\n",PORT);
         exit(-1);
     }
 
@@ -527,8 +527,6 @@ int main (int argc, const char *argv[]) {
         int bytesReceived = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&client_addr,&client_size);
 
         if (bytesReceived > 0) {
-
-            printf("YAY!\n");
 
             if ((buff[1] == 1) || (buff[1] == 2)) {
                 char* fnPtr = buff;

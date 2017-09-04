@@ -7,9 +7,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
-//#define PORT 6112
+#define PORT 6112
 #define CLIENTPORT 54321
-#define SERVERPORT 12345
+//#define PORT 12345
 
 typedef int bool;
 #define true 1
@@ -539,7 +539,7 @@ int main (int argc, const char *argv[]) {
     // Other things for server & client addr
     server_addr.sin_family = AF_INET;
     client_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVERPORT);
+    server_addr.sin_port = htons(PORT);
     client_addr.sin_port = htons(CLIENTPORT);
     memcpy((void*)&server_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
     memcpy((void*)&client_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
