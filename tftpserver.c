@@ -8,8 +8,8 @@
 #include <unistd.h>
 #include <errno.h>
 //#define PORT 6112
-#define CLIENTPORT 54321
 #define SERVERPORT 12345
+#define CLIENTPORT 54321
 
 typedef int bool;
 #define true 1
@@ -25,7 +25,7 @@ static struct sockaddr_in client_addr;
 static int fd = -1;
 
 void resendPacket() {
-    sendto(fd,lastPacket,strlen(lastPacket),0,(struct sockaddr*)&server_addr,sizeof(server_addr));
+    sendto(fd,lastPacket,strlen(lastPacket),0,(struct sockaddr*)&client_addr,sizeof(client_addr));
 }
 
 void timeoutHandler(int x) {
@@ -135,14 +135,11 @@ bool validFileName(const char* fileName) {
         }
         i++;
     }
-
-    return true;
 }
 
+// Make sure the file exists in /serverFiles/
 bool validFile(const char* fileName, bool writeMode) {
 
-
-printf("%s\n",fileName);
     // Make sure, if we are writing to server, 
     // that the file exists and can be read
     if (writeMode) {
@@ -198,7 +195,7 @@ int sendData(const char* data, int blockNumber) {
     }
 
     // Send message
-    int bytesSent =  sendto(fd,message,strlen(message),0,(struct sockaddr*)&server_addr,sizeof(server_addr));     
+    int bytesSent =  sendto(fd,message,strlen(message),0,(struct sockaddr*)&client_addr,sizeof(client_addr));     
 
     // Set timeout timer
     timeoutInterval = TIMEOUT_BASE;
@@ -226,7 +223,7 @@ void sendACK(int blockNumber, bool writeMode) {
 
     char message[4] = {0, 4, upper, lower};
 
-    int fx = sendto(fd,message,strlen(message),0,(struct sockaddr*)&server_addr,sizeof(server_addr));
+    int fx = sendto(fd,message,strlen(message),0,(struct sockaddr*)&client_addr,sizeof(client_addr));
 
     // In case no new data packet is received
     // while in read mode, resend the ACK packet
@@ -245,13 +242,13 @@ int waitForACK(int expectedBlock) {
     bool notDone = true;
     char buff[5];
     memset( (char*)&buff,0,sizeof(buff));
-    int len = sizeof(server_addr);
+    int len = sizeof(client_addr);
     
     // Do not stop waiting until ack arrives
     // Mandatory for Stop-and-Wait
     printf("WAITING FOR ACK OF BLOCK NUMBER %d.\n", expectedBlock);
     while (notDone) {
-        recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&server_addr,&len);
+        recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&client_addr,&len);
        
         if (recvlen > 4) {
             sendERR(0,"ACK PACKET TOO LARGE; MUST BE 4 BYTES", "ACK PACKET TOO LARGE; MUST BE 4 BYTES. Terminating.\n");
@@ -339,17 +336,20 @@ void sendRQ(const char* filename, bool writeMode) {
     free(rqPacket);
 }
 
-// READING FROM SERVER AND WRITING TO CLIENT!
-void readFromServer(FILE* fp) {
-    int blockNumber = 1;
+// READING FROM CLIENT AND WRITING TO SERVER!
+void readFromClient(FILE* fp) {
+    int blockNumber = 0;
     bool notDone = true;
     char buff[517] = {0};
-    int len = sizeof(server_addr);
+    int len = sizeof(client_addr);
+
+    // Send an ACK back to client
+    sendACK(blockNumber,true);
 
     // Now in receiving mode
     printf("Waiting for Data Packets from server...\n");
     while (notDone) {
-        int recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&server_addr,&len); 
+        int recvlen = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&client_addr,&len); 
         
         // Handle packet received
         if (recvlen > 0 && recvlen < 517) {
@@ -385,7 +385,7 @@ void readFromServer(FILE* fp) {
 
                 // Send ACK with block number received
                 printf("SEND: ACK of Block Number %d.\n",blockNumber);
-                sendACK(blockNumber++, false);
+                sendACK(blockNumber++, true);
                 
             // In case of duplicate data packet, resend last packet (ACK message)
             } else if ((buff[1] == 3) && (block < blockNumber)) {
@@ -415,12 +415,11 @@ void readFromServer(FILE* fp) {
     fclose(fp);
 }
 
-// WRITING TO SERVER AND READING FROM CLIENT!
-void writeToServer(FILE* fp) {
+// WRITING TO CLIENT AND READING FROM SERVER!
+void writeToClient(FILE* fp) {
 
     // Set up block number (0 for WRQ), wait for ACK or timeout
-    int blockNumber = 0;
-    blockNumber = waitForACK(blockNumber);
+    int blockNumber = 1;
 
     // Set up buffer, read first 512 characters from the file
     char buff[512] = {0};
@@ -447,22 +446,22 @@ void writeToServer(FILE* fp) {
 void readOrWrite(const char* filename, bool writeMode) {
     // ASSUMPTION: filename has been checked
     // See main() and validFileName()
-    
+
     // WRITING TO SERVER = READING FROM CLIENT
     // READING FROM SERVER = WRITING TO CLIENT
-    char* flag = writeMode ? "r" : "w"; 
+    char* flag = writeMode ? "w" : "r"; 
 
     FILE* fp = fopen(filename,flag);
     checkERR(writeMode);
 
-    sendRQ(filename, writeMode);    
-
     if (writeMode) {
-        printf("WRQ sent to server.\n");
-        writeToServer(fp);
+        printf("WRQ received by server.\n");
+        printf("Reading from %s to client.\n",filename); 
+       readFromClient(fp);
     } else {
-        printf("RRQ sent to server.\n");
-        readFromServer(fp);
+        printf("RRQ received by server.\n");
+        printf("Writing to %s from client.\n",filename);
+        writeToClient(fp);
     }
 }
 
@@ -484,42 +483,7 @@ int main (int argc, const char *argv[]) {
     // Handle -h (help) flag
     if ((argc > 1) && (strcmp(argv[1],"-h") == 0)) {
         showHelp();
-
-    // Ensure there are only two arguments
-    } else if (argc != 3) {
-        printf("Incorrect number of arguments.\n");
-        showHelp();
-
-    // Set writeMode based on flag (false if -r)          
-    } else if (strcmp(argv[1],"-r") == 0) {
-        writeMode = false;
-
-    // (true if -w)
-    } else if (strcmp(argv[1],"-w") == 0) {
-        writeMode = true;
- 
-    // If -r or -w or -h cases aren't true, usage is incorrect
-    } else {
-        printf("incorrect usage.\n");
-        showHelp();
     }
-
-
-    // Make sure filename is valid (no pathways)
-    if (validFileName(argv[2])) {
-        // Set filename
-        filename = argv[2];
-
-        if (writeMode) {
-            printf("Writing file '%s' to server.\n",filename);
-        } else {
-            printf("Reading file '%s' from server.\n",filename);
-        }
-    } else {
-        printf("Invalid file name '%s'. Terminating.\n",argv[2]);
-        exit(-1);
-    }
-
 
     // Set up UDP socket
     fd = socket(AF_INET,SOCK_DGRAM,0);
@@ -527,15 +491,15 @@ int main (int argc, const char *argv[]) {
         perror("fd is less than 0");
         exit(-1);
     }
-
+  
     // Get IP address of local host via DNS lookup
     struct hostent* hp;
     hp = gethostbyname("localhost");
 
-    // Allocate resources for server & client addr 
+    // Allocate resources for server & client addr
     memset( (char*)&server_addr,0,sizeof(server_addr));
     memset( (char*)&client_addr,0,sizeof(client_addr));
-
+    
     // Other things for server & client addr
     server_addr.sin_family = AF_INET;
     client_addr.sin_family = AF_INET;
@@ -543,35 +507,90 @@ int main (int argc, const char *argv[]) {
     client_addr.sin_port = htons(CLIENTPORT);
     memcpy((void*)&server_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
     memcpy((void*)&client_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
+                                     
 
-    if (bind(fd, (struct sockaddr*)&client_addr,sizeof(client_addr)) ) {
-        printf("UNABLE TO BIND PORT %d TO PROCESS SOCKET. Terminating.\n",CLIENTPORT);
+    // Bind socket to port/process
+    if (bind(fd, (struct sockaddr*)&server_addr,sizeof(server_addr)) ) {
+        printf("UNABLE TO BIND PORT %d TO PROCESS SOCKET. Terminating.\n",SERVERPORT);
         exit(-1);
     }
 
     // Set timeout handler
     signal(SIGALRM,timeoutHandler);
+ 
+    int client_size = sizeof(client_addr);
+    char buff[5] = {0};
 
-    //Set up filename to include /clientFiles/
-    char* fn = NULL;
-    size_t dirLen = strlen("/clientFiles/");
-    fn = realloc(fn,dirLen + strlen(filename) + 1);
-    strncpy(fn,"/clientFiles/",dirLen);
-    strcat(fn,filename); 
+    printf("Waiting for a request.\n");
+    while (true) {
+        
+        int bytesReceived = recvfrom(fd,buff,sizeof(buff),0,(struct sockaddr*)&client_addr,&client_size);
 
-    // Make sure file exists in /clientFiles/
-    if (validFile(fn,writeMode)) {
-        // Start the actual reading/writing process      
-        readOrWrite(fn,writeMode);
+        if (bytesReceived > 0) {
 
-    // Send ERR & Terminate if not.
-    } else {
-        sendERR(1,"ERROR: FILE NOT FOUND.","ERROR: FILE NOT FOUND. Terminating.\n");
-    }
+            printf("YAY!\n");
 
-    if (writeMode) {
-        printf("Write of file %s to server successful. Terminating.\n",filename);
-    } else {
-        printf("Read of file %s from server successful. Terminating. \n",filename);
+            if ((buff[1] == 1) || (buff[1] == 2)) {
+                char* fnPtr = buff;
+                char* filename;
+                char* fn;
+                size_t nameSize = 0;
+                fnPtr += 2;
+                 
+                // writeMode is true if packet is WRQ
+                bool writeMode = buff[1] == 2;
+
+                while (*fnPtr) {
+                    nameSize++;
+                    fn = realloc(fn,nameSize+1);
+                    fn[nameSize-1] = *fnPtr++;
+                }
+                fn[nameSize] = '\0';
+
+                char* mode;
+                nameSize = 0;
+                fnPtr++;
+
+                while (*fnPtr) {
+                    nameSize++;
+                    mode = realloc(mode,nameSize+1);
+                    mode[nameSize-1] = *fnPtr++;
+                }
+                mode[nameSize] = '\0';
+
+                if (strcmp(mode,"octet") != 0) {
+                    sendERR(0,"ERROR: INCORRECT MODE.","ERROR: INCORRECT MODE. Terminating.\n");
+                } else {
+                    validFileName(fn);
+                }
+
+                size_t dirLen = strlen("/serverFiles/");
+                filename = realloc(filename,dirLen + strlen(fn) + 1);
+                strncpy(filename,"/serverFiles/",dirLen);
+                strcat(filename,fn);
+
+                // Make sure file exists in /serverFiles/
+                if (validFile(filename,writeMode)) {
+                    readOrWrite(filename,writeMode);
+
+                // If not, send ERR
+                } else {
+                    sendERR(1,"ERROR: FILE NOT FOUND","ERROR: FILE NOT FOUND. Terminating.\n");
+                }
+
+            } else {
+                sendERR(4,"","ERROR: Illegal operation. Received a packet with opcode %d instead of RQ. Terminating.\n");
+            }
+
+            if (writeMode) {
+                printf("Write of file %s to client successful. Waiting for new request.\n\n",filename);
+            } else {
+                printf("Read of file %s from client successful. Waiting for new request.\n\n",filename);
+            }
+
+            printf("Waiting for a new request.");
+        } else if (bytesReceived < 0) {
+            sendERR(0,"ERROR: -1 RETURNED FROM recvfrom().", "ERROR: -1 RETURNED FROM recvfrom(). Terminating.\n");
+        }
     }
 }
