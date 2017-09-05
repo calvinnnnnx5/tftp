@@ -1,8 +1,10 @@
 all: client server
 
-client: client.c
-	gcc -o client client.c
+client: tftpclient.c
+	gcc -o client tftpclient.c
 
-server: server.c
-	gcc -o server server.c
+server: tftpserver.c
+	gcc -o server tftpserver.c
 
+clean:
+	rm client server

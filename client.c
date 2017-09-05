@@ -72,7 +72,7 @@ void sendERR(int code, char* str, char* printstr) {
 
     // Allocate space for the message
     // Keep trying up to 10 times or until memory is allocated
-    message = realloc(message, size);
+    message = (char*)malloc( size);
 
     // Start building string starting with op code,
     // then error code, then error message
@@ -88,7 +88,7 @@ void sendERR(int code, char* str, char* printstr) {
     message[index++] = '\0';
     
     // Send message to server
-    sendto(fd,message,strlen(message),0,(struct sockaddr*)&server_addr,sizeof(server_addr));
+    sendto(fd,message,size,0,(struct sockaddr*)&server_addr,sizeof(server_addr));
 
     // Free memory for message
     free(message);
@@ -140,9 +140,7 @@ bool validFileName(const char* fileName) {
 }
 
 bool validFile(const char* fileName, bool writeMode) {
-
-
-printf("%s\n",fileName);
+    
     // Make sure, if we are writing to server, 
     // that the file exists and can be read
     if (writeMode) {
@@ -156,8 +154,8 @@ printf("%s\n",fileName);
     // with the same name in the same directory
     } else  {
         int res = access(fileName, F_OK);
-        if (res != 0) {
-            checkERR(false);
+        if (res == 0) {
+            sendERR(0,"ERROR: FILE FOUND. CANNOT WRITE TO EXISTING FILE.","ERROR: FILE FOUND. CANNOT WRITE TO EXISITING FILE. Terminating.\n");
         }
     }
 
@@ -175,7 +173,7 @@ int sendData(const char* data, int blockNumber) {
     // and 2 more bytes for the opcode
     // Allocate the total number of bytes needed to message
     size += strlen(data) + 4;
-    message = realloc(message, size);
+    message = (char*)malloc(size);
 
     // Add opcode first
     message[index++] = 0;
@@ -186,7 +184,7 @@ int sendData(const char* data, int blockNumber) {
     message[index++] = blockbuff;
 
     // Insert bits 0-7 of block number into second block number byte
-    blockbuff = blockNumber ^ 65288;
+    blockbuff = blockNumber ^ 65280;
     message[index++] = blockbuff;
 
     // Insert actual data (up to 512 bytes),
@@ -198,7 +196,7 @@ int sendData(const char* data, int blockNumber) {
     }
 
     // Send message
-    int bytesSent =  sendto(fd,message,strlen(message),0,(struct sockaddr*)&server_addr,sizeof(server_addr));     
+    int bytesSent =  sendto(fd,message,size,0,(struct sockaddr*)&server_addr,sizeof(server_addr));     
 
     // Set timeout timer
     timeoutInterval = TIMEOUT_BASE;
@@ -226,13 +224,14 @@ void sendACK(int blockNumber, bool writeMode) {
 
     char message[4] = {0, 4, upper, lower};
 
-    int fx = sendto(fd,message,strlen(message),0,(struct sockaddr*)&server_addr,sizeof(server_addr));
-
+    int fx = sendto(fd,message,4,0,(struct sockaddr*)&server_addr,sizeof(server_addr));
+    
     // In case no new data packet is received
     // while in read mode, resend the ACK packet
     if (!writeMode) {
         timeoutInterval = TIMEOUT_BASE;
         alarm(timeoutInterval);
+        lastPacket = (char*)malloc(4);
         strncpy(lastPacket,message,4);
     }
 }
@@ -273,7 +272,7 @@ int waitForACK(int expectedBlock) {
                 // If block == expectedBlock, then ACK message received
                 if (block == expectedBlock) {
                     expectedBlock++;
-                    notDone = true;
+                    notDone = false;
                     printf("RECV: ACK of Block Number %d.\n",block);
 
                 // If block > expectedBlock, there is something obv wrong
@@ -308,7 +307,7 @@ void sendRQ(const char* filename, bool writeMode) {
     size_t size = strlen(filename) +  2 + 2 + strlen(mode);  
 
     // Allocate space for rqPacket
-    rqPacket = realloc(rqPacket, size); 
+    rqPacket = (char*)malloc(size); 
 
     // Set appropriate fields in order
     rqPacket[index++] = 0;
@@ -326,11 +325,11 @@ void sendRQ(const char* filename, bool writeMode) {
     
     // Copy rqPacket to lastPacket in case
     // of timeout occurring
-    lastPacket = realloc(lastPacket,size);
+    lastPacket = (char*)malloc(size);
     strncpy(lastPacket,rqPacket,size);
     
     // Send request packet
-    sendto(fd,rqPacket,strlen(rqPacket),0,(struct sockaddr*)&server_addr,sizeof(server_addr));
+    int x = sendto(fd,rqPacket,size,0,(struct sockaddr*)&server_addr,sizeof(server_addr));
 
     // Set timer
     alarm(timeoutInterval);    
@@ -411,8 +410,6 @@ void readFromServer(FILE* fp) {
             sendERR(0,"DATA TOO LARGE; RESTRICT TO 512 BYTES", "RECEIVED DATA EXCEEDS 512 BYTES. Terminating.\n");
         }
     }
-    
-    fclose(fp);
 }
 
 // WRITING TO SERVER AND READING FROM CLIENT!
@@ -444,7 +441,10 @@ void writeToServer(FILE* fp) {
     fclose(fp);
 }
 
-void readOrWrite(const char* filename, bool writeMode) {
+// filename is the actual file name. e.g. foo.txt
+// fn is the file name with the path. e.g. /clientFiles/foo.txt
+// writeMode is whether or not the RQ will be RRQ or WRQ (WRQ if true)
+void readOrWrite(const char* filename, const char* fn, bool writeMode) {
     // ASSUMPTION: filename has been checked
     // See main() and validFileName()
     
@@ -452,7 +452,7 @@ void readOrWrite(const char* filename, bool writeMode) {
     // READING FROM SERVER = WRITING TO CLIENT
     char* flag = writeMode ? "r" : "w"; 
 
-    FILE* fp = fopen(filename,flag);
+    FILE* fp = fopen(fn,flag);
     checkERR(writeMode);
 
     sendRQ(filename, writeMode);    
@@ -464,6 +464,7 @@ void readOrWrite(const char* filename, bool writeMode) {
         printf("RRQ sent to server.\n");
         readFromServer(fp);
     }
+
 }
 
 // Help prompt showing usage and meaning of each flag
@@ -544,9 +545,11 @@ int main (int argc, const char *argv[]) {
     memcpy((void*)&server_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
     memcpy((void*)&client_addr.sin_addr,hp->h_addr_list[0],hp->h_length);
 
-    if (bind(fd, (struct sockaddr*)&client_addr,sizeof(client_addr)) ) {
+    if (bind(fd, (struct sockaddr*)&client_addr,sizeof(client_addr)) == -1) {
         printf("UNABLE TO BIND PORT %d TO PROCESS SOCKET. Terminating.\n",CLIENTPORT);
         exit(-1);
+    } else {
+        printf("Socket bound to port %d.\n",CLIENTPORT);
     }
 
     // Set timeout handler
@@ -554,19 +557,20 @@ int main (int argc, const char *argv[]) {
 
     //Set up filename to include /clientFiles/
     char* fn = NULL;
-    size_t dirLen = strlen("/clientFiles/");
-    fn = realloc(fn,dirLen + strlen(filename) + 1);
-    strncpy(fn,"/clientFiles/",dirLen);
+    size_t dirLen = strlen("./clientFiles/");
+    fn = (char*)malloc(dirLen + strlen(filename) + 1);
+    strncpy(fn,"./clientFiles/",dirLen);
     strcat(fn,filename); 
+    lastPacket = NULL;
 
     // Make sure file exists in /clientFiles/
     if (validFile(fn,writeMode)) {
         // Start the actual reading/writing process      
-        readOrWrite(fn,writeMode);
+        readOrWrite(filename,fn,writeMode);
 
     // Send ERR & Terminate if not.
     } else {
-        sendERR(1,"ERROR: FILE NOT FOUND.","ERROR: FILE NOT FOUND. Terminating.\n");
+        sendERR(1,"","ERROR: FILE NOT FOUND. Terminating.\n");
     }
 
     if (writeMode) {
@@ -574,4 +578,7 @@ int main (int argc, const char *argv[]) {
     } else {
         printf("Read of file %s from server successful. Terminating. \n",filename);
     }
+
+    free(fn);
+    free(lastPacket);
 }
