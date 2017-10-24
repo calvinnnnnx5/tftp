@@ -75,7 +75,9 @@ To show help message
 
 ---
 
-## Possible errors
+## Possible Errors
+
+#### Reasons why an error has occurred:
 
 + The client is reading `filename` from the server, but `filename` already exists client-side
 + The client is writing `filename` to the server, but `filename` already exists server-side
