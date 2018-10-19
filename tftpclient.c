@@ -67,7 +67,7 @@ void sendERR(int code, char* str, char* printstr) {
     int index = 0;
 
     // Set up size of message string
-    // Add 5 at the end for error code, opcode, and null char
+    // Add 5 to the end for error code, opcode, and null char
     size += strlen(str) + 5;
 
     // Allocate space for the message
